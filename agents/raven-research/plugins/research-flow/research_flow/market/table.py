@@ -90,7 +90,7 @@ _NAME_HEADER_RE = re.compile(
 #: language, so a report written in Chinese has a Chinese column heading, and
 #: a matcher that knows only English refuses the flow's own output.
 _NAMED_HEADER_RE = re.compile(
-    rf"^(company|vendor|provider|player|brand|competitor|supplier"
+    rf"^(company|vendor|provider|player|brand|competitor|supplier|agency|studio|firm|option|alternative|platform"
     rf"|{_GONG_SI}|{_CHAN_SHANG}|{_CHAN_PIN})",
     re.I,
 )
@@ -397,9 +397,9 @@ def normalise_url(url: str) -> str:
     text = str(url or "").strip()
     if not text:
         return ""
-    head, sep, fragment = text.partition("#")
+    head, sep, _fragment = text.partition("#")
     if not sep:
-        head, fragment = text, ""
+        head = text
     if head.endswith("/") and head.count("/") > 2:
         head = head.rstrip("/")
     scheme, _, rest = head.partition("://")

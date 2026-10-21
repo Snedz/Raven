@@ -188,14 +188,18 @@ class MarketScanGate(Gate):
 
     async def after_iteration(self, ctx: GateCtx) -> HookDecision:
         if getattr(ctx.response, "has_tool_calls", False):
-            # Say so. A gate that declines in silence is a gate whose absence
-            # is invisible, and an invisible gate is indistinguishable from a
-            # gate that was never wired - which is exactly what two batches of
-            # measurements cost.
+            # Say so, and **record** it. A gate that declines in silence is a
+            # gate whose absence is invisible, and an invisible gate is
+            # indistinguishable from a gate that was never wired - which is
+            # exactly what two batches of measurements cost. The note was
+            # already here; the record was not, and the record is the part
+            # a reader looks at.
+            self._record(ctx, "skipped", "the response still reports tool calls")
             return HookDecision(notes=["market_scan_skipped_tool_calls"])
         content = getattr(ctx.response, "content", None) or ""
         answer = visible_answer(content)
         if not answer:
+            self._record(ctx, "skipped", "the answer reached the gate empty")
             return HookDecision(notes=["market_scan_skipped_empty_answer"])
 
         # Found by its shape, not by its citations. The flow's report contract
