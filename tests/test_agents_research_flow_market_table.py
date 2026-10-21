@@ -213,7 +213,7 @@ async def test_the_gate_leaves_the_answer_alone_when_there_is_no_table(tmp_path)
     gate = _gate(tmp_path)
     decision = await gate.after_iteration(_ctx("There is no market here."))
     assert decision.short_circuit_result is None
-    assert decision.notes == ["market_scan_no_table"]
+    assert any("market_scan_no_table" in n for n in decision.notes)
 
 
 @pytest.mark.asyncio
@@ -250,7 +250,7 @@ async def test_the_gate_leaves_the_answer_alone_when_the_run_opened_nothing(tmp_
     )
     decision = await gate.after_iteration(_ctx(TABLE))
     assert decision.short_circuit_result is None
-    assert decision.notes == ["market_scan_no_ledger"]
+    assert any("market_scan_no_ledger" in n for n in decision.notes)
 
 
 @pytest.mark.asyncio
@@ -260,4 +260,267 @@ async def test_the_gate_does_not_run_on_a_turn_that_is_still_working(tmp_path):
     ctx.response = SimpleNamespace(content=TABLE, has_tool_calls=True)
     decision = await gate.after_iteration(ctx)
     assert decision.short_circuit_result is None
-    assert decision.notes == []
+    # It says why it stood aside. A gate that declines in silence is
+    # indistinguishable from a gate that was never wired.
+    assert any("market_scan_skipped_tool_calls" in n for n in decision.notes)
+
+
+# -- the table the flow's own contract produces -------------------------------
+#
+# The report clause asks for the URL of the page a finding came from in the
+# **prose**, and says a candidate's provenance belongs under the comparison
+# table rather than in it. So the comparison table a flow run writes names
+# companies and carries no citation, and the strict reader refuses it.
+
+CONTRACT_TABLE = """| Vendor | 2025 Gartner MQ | Pricing model | Key risk |
+|---|---|---|---|
+| Datadog | Leader (5th yr) | Per host + per-GB ingest | TCO spikes in k8s |
+| Dynatrace | Leader (15th yr) | DPS (consumption commit) | Opaque enterprise pricing |
+"""
+
+PRICING_TABLE = """| Model | How it charges | Typical vendors |
+|---|---|---|
+| Per host | Fixed monthly fee per monitored host | Datadog, New Relic |
+| Per GB | Per GB of telemetry | Grafana Cloud |
+"""
+
+
+def test_the_contract_table_is_found_by_its_shape_even_with_no_citations():
+    """The shape finder sees the table the flow's report clause produces."""
+    from research_flow.market.table import find_vendor_table
+
+    table = find_vendor_table(CONTRACT_TABLE)
+    assert table is not None
+    assert table.header[table.name_index] == "Vendor"
+    assert table.rows[0][0] == "Datadog"
+    # No citation anywhere, so the strict reader refuses it.
+    assert find_market_table(CONTRACT_TABLE) is None
+
+
+def test_a_table_that_does_not_name_companies_is_not_a_vendor_table():
+    """A pricing table lists vendors in a cell; it does not compare them."""
+    from research_flow.market.table import find_vendor_table
+
+    assert find_vendor_table(PRICING_TABLE) is None
+
+
+def test_a_table_carrying_no_source_cannot_be_traced():
+    """Whether any **fact** can be traced - a linked company name is not a fact."""
+    from research_flow.market.table import carries_provenance, find_vendor_table
+
+    table = find_vendor_table(CONTRACT_TABLE)
+    assert table is not None
+    assert carries_provenance(table) is False
+
+    sourced = find_vendor_table(
+        f"""| Vendor | Price | Read from |
+|---|---|---|
+| Datadog | $15/host | [acme]({ACME}) |
+| Dynatrace | $2k/mo | [globex]({GLOBEX}) |
+"""
+    )
+    assert sourced is not None
+    assert carries_provenance(sourced) is True
+
+
+def test_the_swap_keeps_the_report_and_checks_the_table():
+    """The report is kept; the table inside it is the verified one."""
+    from research_flow.market.table import find_vendor_table, swap_table_rows
+
+    # The table the turn writes **after** it was asked for the sources.
+    report = f"""# Competitive landscape
+
+> The market is led by two vendors.
+
+| Vendor | Pricing model | Read from |
+|---|---|---|
+| Datadog | Per host + per-GB ingest | [acme]({ACME}) |
+| Dynatrace | DPS (consumption commit) | [globex]({GLOBEX}) |
+## Trends
+
+OpenTelemetry is the default now.
+"""
+    table = find_vendor_table(report)
+    assert table is not None
+    pages = {
+        ACME: SimpleNamespace(url=ACME, retrieved_at=1_700_000_000.0, source="jina"),
+        GLOBEX: SimpleNamespace(url=GLOBEX, retrieved_at=1_700_000_000.0, source="jina"),
+    }
+    entities = entities_from_table(find_market_table(report), pages)
+    swapped = swap_table_rows(report, table, entities)
+
+    # The report's own shape survives - that is what lets the flow's file
+    # sync write the reply over the file the turn drafted.
+    assert swapped.startswith("# Competitive landscape")
+    assert "> The market is led by two vendors." in swapped
+    assert "## Trends" in swapped
+    assert "OpenTelemetry is the default now." in swapped
+
+    # And the table is the verified one: every fact carries its page.
+    assert "| Datadog |" in swapped
+    assert f"[Per host + per-GB ingest]({ACME})" in swapped
+    assert f"[DPS (consumption commit)]({GLOBEX})" in swapped
+    # The source column still names the pages.
+    assert f"[acme.example/pricing]({ACME})" in swapped
+    assert f"[globex.example/pricing]({GLOBEX})" in swapped
+
+
+def test_a_row_citing_a_page_the_run_never_opened_refuses_the_whole_scan():
+    """One untraceable row refuses the scan - it does not drop the row.
+
+    A scan that states something the sources do not support is worse than no
+    scan, because the next reader cannot tell which parts to trust. So the
+    refusal is the whole scan's, and the turn's own answer stands.
+    """
+    from research_flow.market.table import find_market_table
+
+    report = f"""| Vendor | Price | Read from |
+|---|---|---|
+| Datadog | $15 per host | [acme]({ACME}) |
+| Dynatrace | Contact Sales | [globex]({GLOBEX}) |
+"""
+    pages = {
+        ACME: SimpleNamespace(url=ACME, retrieved_at=1_700_000_000.0, source="jina"),
+    }
+    with pytest.raises(MarketScanError) as excinfo:
+        entities_from_table(find_market_table(report), pages)
+    assert "which the run did not open" in str(excinfo.value)
+
+
+# -- what the review found ----------------------------------------------------
+#
+# Two blocking findings on the source-ask path, both with a reproduction:
+#
+# 1. The prompt asked for a bare URL and for two pages per row, and the
+#    parser reads neither: a bare URL was not read as a link at all, and a
+#    row naming two pages attributed every fact to the first one.
+# 2. The shape-only finder matched English column headings only, so a report
+#    written in the question's language was recorded as "no table" and never
+#    reached the source ask.
+
+BARE_URL_SOURCE = f"""| Vendor | Price | Read from |
+|---|---|---|
+| Datadog | $15 per host | {ACME} |
+| Dynatrace | Contact Sales | {GLOBEX} |
+"""
+
+LINK_ON_THE_FACT = f"""| Vendor | Price |
+|---|---|
+| Datadog | [$15 per host]({ACME}) |
+| Dynatrace | [Contact Sales]({GLOBEX}) |
+"""
+
+TWO_PAGES_IN_A_ROW = f"""| Vendor | Price | Read from |
+|---|---|---|
+| Datadog | $15 per host | [product]({ACME}) [pricing]({GLOBEX}) |
+| Dynatrace | Contact Sales | [globex]({GLOBEX}) |
+"""
+
+
+def test_a_bare_url_in_a_source_column_is_a_source():
+    """The flow's report clause says a source column may hold the bare URL.
+
+    "In prose, put the URL in a markdown link on the words it supports ...
+    a source column in a table may hold the bare URL." So the reader has to
+    read the bare form too, or it refuses the report the clause produces.
+    """
+    from research_flow.market.table import carries_provenance, find_vendor_table
+
+    table = find_vendor_table(BARE_URL_SOURCE)
+    assert table is not None
+    assert carries_provenance(table) is True
+
+    pages = {
+        ACME: SimpleNamespace(url=ACME, retrieved_at=1_700_000_000.0, source="jina"),
+        GLOBEX: SimpleNamespace(url=GLOBEX, retrieved_at=1_700_000_000.0, source="jina"),
+    }
+    entities = entities_from_table(find_market_table(BARE_URL_SOURCE), pages)
+    assert [e.name for e in entities] == ["Datadog", "Dynatrace"]
+    assert entities[0].fields["price"] == "$15 per host"
+    assert entities[0].provenance[0].source_url == ACME
+
+
+def test_a_link_on_the_fact_is_the_facts_own_source():
+    """The form the flow's clause prefers for a fact, and the unambiguous one."""
+    from research_flow.market.table import carries_provenance, find_vendor_table
+
+    table = find_vendor_table(LINK_ON_THE_FACT)
+    assert table is not None
+    assert carries_provenance(table) is True
+
+    pages = {
+        ACME: SimpleNamespace(url=ACME, retrieved_at=1_700_000_000.0, source="jina"),
+        GLOBEX: SimpleNamespace(url=GLOBEX, retrieved_at=1_700_000_000.0, source="jina"),
+    }
+    entities = entities_from_table(find_market_table(LINK_ON_THE_FACT), pages)
+    assert entities[0].fields["price"] == "$15 per host"
+    assert entities[0].provenance[0].source_url == ACME
+
+
+def test_a_row_naming_two_pages_cannot_attribute_a_fact_to_one_of_them():
+    """The false provenance the review found, refused rather than guessed.
+
+    The row named two pages and the fact named none, so the fact could have
+    come from either. Attributing it to the page listed first is a
+    provenance nobody checked.
+    """
+    from research_flow.market.table import find_market_table
+
+    pages = {
+        ACME: SimpleNamespace(url=ACME, retrieved_at=1_700_000_000.0, source="jina"),
+        GLOBEX: SimpleNamespace(url=GLOBEX, retrieved_at=1_700_000_000.0, source="jina"),
+    }
+    with pytest.raises(MarketScanError) as excinfo:
+        entities_from_table(find_market_table(TWO_PAGES_IN_A_ROW), pages)
+    assert "cannot be traced to one of them" in str(excinfo.value)
+
+
+def test_a_localized_table_is_found_by_its_shape():
+    """The flow asks for the report in the question's language.
+
+    The column heading is then in that language, and a matcher that knows
+    only English records the report as "no table" - so it never reaches the
+    source ask, and a market report in the user's own language is never
+    checked.
+    """
+    from research_flow.market.table import find_vendor_table
+
+    localized = "| \u5382\u5546 | \u4ef7\u683c | \u6765\u6e90 |\n|---|---|---|\n| \u4e01\u53f8 | $15 | x |\n"
+    table = find_vendor_table(localized)
+    assert table is not None
+    assert table.header[table.name_index] == "\u5382\u5546"
+
+
+def test_the_prompt_asks_for_a_form_the_parser_reads():
+    """The prompt and the parser have to agree, or the ask cannot be answered."""
+    from research_flow.gates.market_scan import _SOURCE_COLUMN_PROMPT
+
+    # It asks for a markdown link or a bare URL - both are read.
+    assert "[$15 per host per month](https://example.com/pricing)" in _SOURCE_COLUMN_PROMPT
+    assert "https://example.com/pricing` - one URL per row" in _SOURCE_COLUMN_PROMPT
+    # And it does not offer the ambiguous form.
+    assert "names both" not in _SOURCE_COLUMN_PROMPT
+
+
+def test_a_page_is_the_same_page_however_it_was_written():
+    """A trailing slash is not a different page.
+
+    A report cites the page it read and the run's ledger records the page it
+    opened, and the two are very often the same page written two ways. A
+    reader that treats ``https://rxresu.me/`` and ``https://rxresu.me`` as
+    two pages refuses a fact that is perfectly traced - and the refusal is
+    indistinguishable from a real gap, which is the worst kind.
+    """
+    from research_flow.market.table import normalise_url, opened_pages
+
+    assert normalise_url("https://rxresu.me/") == normalise_url("https://rxresu.me")
+    assert normalise_url("https://rxresu.me/#pricing") == "https://rxresu.me"
+    assert normalise_url("https://RXResume.ME/pricing") == "https://rxresume.me/pricing"
+    assert normalise_url("https://a.example:443/x") == "https://a.example/x"
+    # And a different path is still a different page.
+    assert normalise_url("https://a.example/x") != normalise_url("https://a.example/y")
+
+    rows = [{"op": "fetch", "ok": True, "url": "https://rxresu.me", "extractor": "jina-reader"}]
+    pages = opened_pages(rows)
+    assert normalise_url("https://rxresu.me/") in pages
+    assert pages[normalise_url("https://rxresu.me/")].url == "https://rxresu.me"
