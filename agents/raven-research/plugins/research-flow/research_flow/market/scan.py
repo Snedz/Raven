@@ -33,6 +33,7 @@ from raven.sources.optins import has_opt_in
 from raven.sources.policy import SourceRefusedError, consult
 
 from .ledger import DEFAULT_USE, MarketEntity, entities_payload
+from .table import normalise_url
 
 
 class MarketScanError(RuntimeError):
@@ -84,7 +85,7 @@ def _refuse_unsourced(entity: MarketEntity) -> None:
 
 def _refuse_unopened(entity: MarketEntity, opened: set[str]) -> None:
     for url in entity.source_urls():
-        if url not in opened:
+        if normalise_url(url) not in opened:
             raise MarketScanError(
                 f"{entity.name} cites {url}, which the run did not open. "
                 "A scan may only state what was read."
@@ -179,7 +180,7 @@ def build_scan(
     """
     if not entities:
         raise MarketScanError("a scan with no entities is not a scan")
-    opened = set(opened_urls) if opened_urls is not None else None
+    opened = {normalise_url(u) for u in opened_urls} if opened_urls is not None else None
 
     for entity in entities:
         _refuse_unsourced(entity)
