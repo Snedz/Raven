@@ -139,15 +139,15 @@ async def test_a_table_with_no_sources_is_asked_for_once_and_only_once():
     assert decision.rollback is True
     assert decision.rollback_inject is not None
     assert "Read from" in decision.rollback_inject[-1]["content"]
-    assert ctx.metadata["market_scan"]["last_event"] == "bounced"
+    assert ctx.metadata["market_scan"]["last_event"] == "asked"
 
     # Asked a second time, the gate stops asking and declines: a turn that
     # was asked and did not answer keeps its own answer.
     again = await _gate().after_iteration(ctx)
     assert again.rollback is False
     assert again.short_circuit_result is None
-    assert any("market_scan_no_sources" in n for n in again.notes)
-    assert ctx.metadata["market_scan"]["last_event"] == "no_sources"
+    assert any("market_scan_no_traced_facts" in n for n in again.notes)
+    assert ctx.metadata["market_scan"]["last_event"] == "no_traced_facts"
 
 
 @pytest.mark.asyncio
