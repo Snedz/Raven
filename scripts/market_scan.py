@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """Build the market scan from a preserved research run, and audit it.
 
-The run is the one preserved at ``/Users/snedz/src/market-research-run-2026-10-20/``:
-eight searches and eighteen page reads against the real observability vendors'
-pricing pages, driven through the flow's own web tools on 2026-10-20.  The scan
-is rebuilt from that run's ledger and nothing else, so the report it writes can
-be checked against the same audit that checked the original run's answer:
+The run is a preserved research run: eight searches and eighteen page reads
+against the real observability vendors' pricing pages, driven through the flow's
+own web tools on 2026-10-20.  The scan is rebuilt from that run's ledger and
+nothing else, so the report it writes can be checked against the same audit that
+checked the original run's answer:
 
     python3 scripts/research_report_audit.py --strict <out>/market_scan.md
 
-This script does not invent a fact. Every field below was read from the page named
-beside it, and the pages are the ones the run's own ledger records as opened. The
-ledger is the run's, unmodified: the script reads it, and the scan is built from
-what it says was opened.
+The run's directory is the first argument. There is no default for it: a path
+that names somebody's machine belongs in the caller's command line, not in a
+file everybody else reads.
 
-    python3 market_scan_from_run.py [RUN_DIR] [OUT_DIR]
+    python3 market_scan_from_run.py <RUN_DIR> [OUT_DIR]
 """
 
 from __future__ import annotations
@@ -22,6 +21,10 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+
+if len(sys.argv) < 2:
+    print("usage: market_scan_from_run.py <RUN_DIR> [OUT_DIR]", file=sys.stderr)
+    raise SystemExit(2)
 
 REPO = Path(__file__).resolve().parent.parent
 PLUGIN_DIR = REPO / "agents" / "raven-research" / "plugins" / "research-flow"
@@ -31,7 +34,7 @@ from research_flow.market import MarketEntity, build_scan, write_scan  # noqa: E
 
 from raven.records.types import Provenance  # noqa: E402
 
-RUN = Path(sys.argv[1] if len(sys.argv) > 1 else "/Users/snedz/src/market-research-run-2026-10-20")
+RUN = Path(sys.argv[1])
 OUT = Path(sys.argv[2] if len(sys.argv) > 2 else RUN / "market_scan")
 
 AS_OF = "2026-10-20"
