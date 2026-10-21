@@ -500,3 +500,27 @@ def test_the_prompt_asks_for_a_form_the_parser_reads():
     assert "https://example.com/pricing` - one URL per row" in _SOURCE_COLUMN_PROMPT
     # And it does not offer the ambiguous form.
     assert "names both" not in _SOURCE_COLUMN_PROMPT
+
+
+def test_a_page_is_the_same_page_however_it_was_written():
+    """A trailing slash is not a different page.
+
+    A report cites the page it read and the run's ledger records the page it
+    opened, and the two are very often the same page written two ways. A
+    reader that treats ``https://rxresu.me/`` and ``https://rxresu.me`` as
+    two pages refuses a fact that is perfectly traced - and the refusal is
+    indistinguishable from a real gap, which is the worst kind.
+    """
+    from research_flow.market.table import normalise_url, opened_pages
+
+    assert normalise_url("https://rxresu.me/") == normalise_url("https://rxresu.me")
+    assert normalise_url("https://rxresu.me/#pricing") == "https://rxresu.me"
+    assert normalise_url("https://RXResume.ME/pricing") == "https://rxresume.me/pricing"
+    assert normalise_url("https://a.example:443/x") == "https://a.example/x"
+    # And a different path is still a different page.
+    assert normalise_url("https://a.example/x") != normalise_url("https://a.example/y")
+
+    rows = [{"op": "fetch", "ok": True, "url": "https://rxresu.me", "extractor": "jina-reader"}]
+    pages = opened_pages(rows)
+    assert normalise_url("https://rxresu.me/") in pages
+    assert pages[normalise_url("https://rxresu.me/")].url == "https://rxresu.me"

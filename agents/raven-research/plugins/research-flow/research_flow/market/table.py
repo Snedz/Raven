@@ -378,6 +378,41 @@ def carries_provenance(table: MarketTable) -> bool:
     return False
 
 
+def normalise_url(url: str) -> str:
+    """The same page, however it was written.
+
+    A report cites the page it read, and the run's ledger records the page it
+    opened, and the two are very often the same page written two ways:
+    ``https://rxresu.me/`` and ``https://rxresu.me`` are one page, and a
+    reader that treats them as two refuses a fact that is perfectly traced.
+    So the comparison is made on the page's identity - scheme and host in
+    lower case, no fragment, no default port, and no trailing slash - and the
+    URL as written is kept for the reader and the link.
+
+    This is a *normalisation*, not a loosening: a different host, a
+    different path or a different scheme is still a different page, and a
+    fact that cites one is still a fact that cites a page the run did not
+    open.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    head, sep, fragment = text.partition("#")
+    if not sep:
+        head, fragment = text, ""
+    if head.endswith("/") and head.count("/") > 2:
+        head = head.rstrip("/")
+    scheme, _, rest = head.partition("://")
+    if not rest:
+        return head.lower()
+    host, slash, path = rest.partition("/")
+    if host.endswith(":80") and scheme.lower() == "http":
+        host = host[:-3]
+    elif host.endswith(":443") and scheme.lower() == "https":
+        host = host[:-4]
+    return f"{scheme.lower()}://{host.lower()}{slash}{path}"
+
+
 def opened_pages(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -391,6 +426,10 @@ def opened_pages(
     the vendor whose terms that backend carries. A backend with no registry
     key keeps its own name, and the scan refuses it: a reader whose terms
     have not been looked at cannot back a market scan.
+
+    The map is keyed by the page's **identity**, not by the URL as the
+    ledger wrote it, so a report that cites the same page with a trailing
+    slash finds it.
     """
     keys = dict(extractor_keys or {})
     pages: dict[str, OpenedPage] = {}
@@ -402,7 +441,7 @@ def opened_pages(
             continue
         extractor = str(row.get("extractor") or "").strip()
         source = keys.get(extractor, extractor or "web")
-        pages[url] = OpenedPage(
+        pages[normalise_url(url)] = OpenedPage(
             url=url,
             retrieved_at=float(row.get("ts") or time.time()),
             source=source,
@@ -487,7 +526,7 @@ def entities_from_table(
         # with a missing provenance.
         provenance: list[Provenance] = []
         for field, url in pending:
-            page = pages.get(url)
+            page = pages.get(normalise_url(url))
             if page is None:
                 raise MarketScanError(
                     f"{name}: the {field!r} fact cites {url}, which the run did not open"
