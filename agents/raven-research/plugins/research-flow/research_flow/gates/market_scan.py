@@ -82,14 +82,38 @@ Put the page behind each fact in the table, in one of two forms:
 - in a `Read from` column, as the URL of the page the row's facts came from:
   `https://example.com/pricing` - one URL per row.
 
-A row whose facts came from two different pages needs the link on each fact:
-a cell that names two pages cannot be traced to one of them, and a row that
-names two pages cannot say which of them a fact came from.
+A row whose facts came from two different pages needs the link on each fact,
+because a cell that names two pages cannot be traced to one of them, and a row
+that names two pages cannot say which of them a fact came from.
 
 Keep everything else in the report as it is - the sections, the argument, the
 other tables, and the wording of the comparison table's own columns. The table
 keeps the columns that decide it; the sources go in the new column beside
 them."""
+
+
+def _ask_prompt(complaint: str) -> str:
+    """The turn's own answer, with the gate's complaint in it.
+
+    The complaint names the fact and the page, so the turn can fix the one
+    cell that is wrong rather than rewrite the table.
+    """
+    return f"""One fact in your comparison table cannot be checked, because
+the page it names is not a page this run opened.
+
+{complaint}
+
+A fact ships only when the page that states it is one this run actually
+opened - the list of opened pages is above. So:
+
+- if a fact names a page this run did not open, cite the address this run did
+  open (the same file under its current name, if the address you have is an
+  older one);
+- if a row's facts come from more than one page, give each fact its own link;
+- if you cannot point at a page that states the fact, leave that fact out of
+  the table and say so in the profile.
+
+Then give the corrected table, and keep the rest of the report as it is."""
 
 
 def _extractor_keys() -> dict[str, str]:
@@ -200,7 +224,17 @@ class MarketScanGate(Gate):
                 opened_urls=list(pages),
             )
         except MarketScanError as exc:
-            return self._decline(ctx, "refused", str(exc))
+            # A fact that cannot be traced is a **fixable** answer, not a
+            # verdict: the turn knows which pages it opened, and the complaint
+            # names the one fact that is wrong. So the gate asks once, with
+            # the complaint in it - and if the turn still cannot trace it,
+            # the answer stands unverified and the record says so.
+            return self._ask(
+                ctx,
+                answer,
+                f"the market check could not trace a fact in your comparison table: {exc}",
+                key="asked_for_traced_facts",
+            )
 
         # The report is kept and the table inside it is checked: the reader
         # gets the argument, the sections and the other tables, and a
@@ -241,35 +275,50 @@ class MarketScanGate(Gate):
         nothing about which of them backs which row. That is the one gap the
         gate can close, and it closes it by asking - the same way the report
         shape gate asks for a report in three sections.
+        """
+        return self._ask(
+            ctx,
+            answer,
+            "your comparison table does not say where its facts came from, so none of it "
+            "can be checked",
+            key="asked_for_sources",
+            prompt=_SOURCE_COLUMN_PROMPT,
+        )
 
-        **Once.** A turn that was asked and did not answer keeps its own
-        answer, and the record says it was asked: "asked and still had no
-        source" and "never asked" are different states, and only the first is
-        evidence that the prompt-side fix has run out of road.
+    def _ask(
+        self,
+        ctx: GateCtx,
+        answer: str,
+        complaint: str,
+        *,
+        key: str,
+        prompt: str | None = None,
+    ) -> HookDecision:
+        """Ask the turn once, with the complaint in it, and then stop asking.
+
+        A refusal the turn can act on is a **request**, not a verdict: the
+        run's own list of opened pages is above it, so the turn knows which
+        addresses it opened. The gate asks once, because a turn that was asked
+        and did not answer is a finding in its own right, and asking twice is
+        how a gate starts to talk to itself.
         """
         state = ctx.metadata.setdefault("market_scan", {})
-        if state.get("asked_for_sources"):
-            return self._decline(
-                ctx, "no_sources", "the comparison table still carries no source for its facts"
-            )
-        state["asked_for_sources"] = True
-        self._record(
-            ctx, "bounced", "the comparison table carries no source for its facts; asked for one"
-        )
-        logger.warning(
-            "market-scan: the comparison table carries no source; asking for a Read from column"
-        )
+        if state.get(key):
+            return self._decline(ctx, "no_traced_facts", complaint)
+        state[key] = True
+        self._record(ctx, "asked", complaint)
+        logger.warning("market-scan: asking the turn to fix its table (%s)", complaint)
         return HookDecision(
             rollback=True,
             rollback_inject=[
                 {"role": "assistant", "content": answer, "_recovery_synthetic": True},
                 {
                     "role": "user",
-                    "content": _SOURCE_COLUMN_PROMPT,
+                    "content": prompt or _ask_prompt(complaint),
                     "_recovery_synthetic": True,
                 },
             ],
-            notes=["market_scan_bounced: asked for a Read from column"],
+            notes=[f"market_scan_asked: {complaint}"],
         )
 
     def _decline(self, ctx: GateCtx, event: str, detail: str) -> HookDecision:

@@ -217,13 +217,30 @@ async def test_the_gate_leaves_the_answer_alone_when_there_is_no_table(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_the_gate_leaves_the_answer_alone_when_a_fact_cannot_be_traced(tmp_path):
-    """A table that cites a page the run never opened is not shipped as a scan."""
+async def test_a_fact_that_cannot_be_traced_is_asked_about_once_and_only_once(tmp_path):
+    """A table that cites a page the run never opened is not shipped as a scan.
+
+    And it is not shipped *silently* either: the turn knows which pages it
+    opened, and the complaint names the one fact that is wrong, so the gate
+    asks once - and a turn that was asked and still cannot trace it keeps its
+    own answer, with the record saying it was asked.
+    """
     table = f"| Company | Price |\n|---|---|\n| Acme | $49 [acme]({ACME}) |\n| Nope | $9 [nope](https://nope.example/p) |\n"
     gate = _gate(tmp_path)
-    decision = await gate.after_iteration(_ctx(table))
+    ctx = _ctx(table)
+    decision = await gate.after_iteration(ctx)
+    # Asked, not refused outright, and not shipped.
     assert decision.short_circuit_result is None
-    assert any("market_scan_refused" in n for n in decision.notes)
+    assert decision.rollback is True
+    assert decision.rollback_inject is not None
+    assert "nope.example" in decision.rollback_inject[-1]["content"]
+    assert ctx.metadata["market_scan"]["last_event"] == "asked"
+
+    # Asked a second time, the gate stops asking and the answer stands.
+    again = await gate.after_iteration(ctx)
+    assert again.rollback is False
+    assert again.short_circuit_result is None
+    assert any("market_scan_no_traced_facts" in n for n in again.notes)
 
 
 @pytest.mark.asyncio
