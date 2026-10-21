@@ -1658,6 +1658,18 @@ All notable changes to Raven are documented here.
 
 ### Fixed
 
+- **TinyFish is offered, selectable, and usable.** The source policy decides
+  whether a vendor's terms permit a use, and it decides by the registry - and
+  TinyFish had no registry row, so the guard refused every TinyFish request
+  while the provider tables offered it as a choice. Its terms are now a row in
+  the registry, cited to the terms that say so: the outputs are assigned to the
+  customer, and the terms forbid using the services or their outputs to build a
+  product that competes with TinyFish's. A search result is still never cached,
+  which is this repository's rule for search and enrichment services, and the
+  one the terms' ban on collecting site content into a database points at. Two
+  tests now hold the registry and the two provider tables together, so a vendor
+  cannot be offered without a row again.
+
 - **The market rung now fires on the research flow's own output, and its check
   reaches the report file.** Two separate causes, both found by replaying a
   measured run's own artefacts rather than by reading the code.
