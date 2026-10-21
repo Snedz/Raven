@@ -5,110 +5,6 @@ All notable changes to Raven are documented here.
 ## Unreleased
 
 ### Added
-- **A draft `agent-decision` predicate for in-toto**, in
-  `docs/specs/2026-10-20-agent-decision-predicate-proposal.md`. in-toto has predicate types
-  for builds (`slsa.dev/provenance/v1`) and for vulnerabilities, and **none for an autonomous
-  agent's decision** -- which is what the buyers of AI assurance ask about, since an
-  underwriter's published criteria ask for a technical system description, a governance and
-  oversight record, an incident history, written scope limits, evaluation and red-team
-  results, and performance data, and **not one of them mentions supply-chain provenance**.
-  The draft states the shape, the eight constraints it has to satisfy, the signer model, what
-  v0.1 deliberately does not carry, and the five questions the maintainers would have to
-  answer. **Nothing has been posted to in-toto, no issue has been claimed, and no account
-  has been used.**
-
-- **The signed-records corpus**: real agent runs, attested, verifiable offline
-  (`scripts/evidence_corpus.py`, `evidence/agent-run-corpus/`). One run record in, one signed
-  DSSE envelope out: the in-toto statement's **subject is the run's own digest**, so a verifier
-  recomputes it from the run record and finds the same value, which is what ties the signature to
-  *this* run rather than to a description of it. The corpus is the empirical half of the
-  standards proposal, and it is built by a tool that takes a directory of run records, so it
-  grows as runs accumulate rather than being assembled by hand.
-
-  Three things it states rather than hides. The signatures are **local Ed25519**, verifiable
-  offline with the public key in the manifest and **not anchored in a transparency log**,
-  because Sigstore keyless signing needs an OIDC identity and a Fulcio/Rekor round trip that
-  this build does not have. The corpus **holds the runs that exist on the machine that built
-  it** and is not a sample of anything. And a check that could not be run is reported as
-  **not run**, never as a pass: the verifier's three states are passed, failed and not run,
-  and a corpus that reports a check it did not perform is worse than no corpus.
-
-  A run that called no tool is recorded as `transport-only`, and its predicate says in its own
-  words that what it establishes is that the transport worked, not that the agent did any
-  work. The seven runs on this machine are all of that kind.
-
-- **The evidence bundle spec** (`docs/specs/2026-10-20-evidence-bundle-design.md`): one
-  portable artefact that attests to how an AI system was built and how it behaved, with a
-  manifest naming every part and a **Bundle Stamp** per part answering the same five
-  questions **Provenance** answers for a field. Shipped as an **open spec** — donated,
-  not a product — so anyone may produce one and anyone may verify one.
-
-  The design is shaped by what the market actually asks for, read from primary sources
-  on 2026-10-20. The buyer who pays for an AI-assurance artefact asks for **run-time**
-  evidence: a technical system description, a governance and oversight record, an incident
-  history, written scope limits, evaluation and red-team results, performance data, a
-  guardrail specification, monitoring and alert configuration, an incident playbook with
-  named kill-switch access, and evidence no more than twelve months old. Supply-chain
-  provenance appears in **none** of those criteria, so the bundle carries **both
-  halves** — build-time for the security reviewer, run-time for the underwriter.
-
-  Two things the spec deliberately refuses. It does not claim conformity: a bundle states
-  what was done, what was observed and what evidence exists, and says in its own
-  limitations what it does not cover. And it does not invent a verifier register — the
-  EU AI Act lists **zero** notified bodies in NANDO while the AI Omnibus defers the
-  Annex III high-risk obligations to 2027-12-02, so a new register would be a directory
-  of directories beside NANDO's Art. 35 list and IAF CertSearch under ISO/IEC 42006.
-  The bundle points at those registers instead.
-
-  **Assurance rung** (`same_principal`, `third_party`, `third_party + L3`) is a declared
-  field rather than an inference, and **evidence freshness** is a field on every part.
-  The new vocabulary is in `CONTEXT.md`: Evidence Bundle, Bundle Stamp, build-time
-  evidence, run-time evidence, evidence freshness, assurance rung, independent verifier.
-
-- **The market rung now reads the pages the turn opened, not the ledger file.**
-  The research flow writes its ledger when the turn *closes*, so a gate that
-  ran mid-turn read a file that had not been written yet and concluded the
-  run had opened nothing — which made every cited fact "a page the run did
-  not open" and left the market rung silently inert on the flow's own
-  market-research report. The flow now exposes its stashed turn rows
-  without consuming them (`turn_rows()`, beside `take_turn_rows()`), the
-  market gate reads them there, and the flow's process appendix still gets
-  them. A gate that has no way to confirm a page was opened now **refuses
-  and says so** rather than inventing a gap. The gate's unit tests had all
-  passed, because they handed it a ledger path with rows in it — a
-  situation the flow never produces; a test that drives the gate the way
-  the flow does now covers it.
-
-- **The market-scan rung.** A research turn whose answer carries a market
-  table now has that table read as a set of claims with their sources: one
-  company per row, one fact per cell, one page per fact, and the field
-  names normalised (`What it does` becomes `what_it_does`) so the same
-  table reads the same way to the scan's own criteria. A fact that cannot
-  be traced to one page is not carried — two pages in a cell is a refusal
-  rather than a guess, and a cell with no page of its own falls back to
-  the row's source column and is dropped when there is none. The scan
-  refuses a fact with no source, a source whose terms do not permit the
-  use (the same registry the records store and the web tool consult), a
-  page the run never opened, a fact that cannot be dated, and a field
-  cleared for a different use. Three gates sit over it, **each ablatable
-  on its own**: a **mechanical** gate that is pass/fail only and costs no
-  model call; a **sufficiency** gate that checks the scan against criteria
-  **declared before retrieval** — the criteria are the operator's
-  configuration, read when the gate is built, and the gate compares that
-  declaration's timestamp against the run's first fetch and refuses a
-  criterion written after the pages were read, because that describes the
-  answer rather than requiring it; and a **judge** that runs last, on a
-  cheap model, and is measured against a second reading with the
-  companies in the opposite order — a judge whose verdict changes when the
-  order changes is reacting to the presentation, and the gate says so. The
-  stop policy reports **precision and calibration error apart from
-  accuracy**, and a regression in either fails the gate even when accuracy
-  holds: the cheap way to raise accuracy is to stop more often, and that
-  is a trade rather than an improvement. The scan replaces the comparison
-  table inside the answer only when the gates pass; otherwise the turn's own
-  answer stands and the record says which gate said no. The shipped profile
-  label moves with it, to
-  `dr@3.7-filetools-askuser-derive-numeric-cite-rank-tiers-plain-high-reader-market`.
 
 - The Agent Hub has a **Machines** tab: the registered machines with the state
   of each one's link and Raven node, a form that registers one (it reaches the
@@ -228,17 +124,6 @@ All notable changes to Raven are documented here.
   sub-agent's search tool routes through it too and pages with a result
   offset like SerpApi.
 
-- TinyFish joins the `web_search` vendors: `tools.web.search.provider: tinyfish`
-  with the key under `tools.web.providers.tinyfish.apiKey` (or
-  `TINYFISH_API_KEY`). Ranked rows normalised into the shared render path;
-  the research sub-agent's search tool routes through it too and pages with a
-  **zero-based page index**, so the saturation rule's page N is N-1. Its API
-  takes no result-count parameter -- the page size is the service's and the
-  tool slices the rows to the count it asked for -- so the onboard wizard's
-  probe sends the same request the tool sends in full rather than a smaller
-  one. It is the one search vendor whose key is **free to a published daily
-  allowance** rather than metered per call.
-
 - Two dark templates join the bundled catalogue, cut from user uploads: a
   near-black circuit-board deck for product launches and a green aurora deck
   for trend reports. Hidden vendor pages are gone, vendor marks are stripped,
@@ -260,6 +145,17 @@ All notable changes to Raven are documented here.
   however its path is spelled, is refused. A decision node whose route cannot be determined fails rather than
   guessing. Playbooks carry the same three fields, and the TUI's DAG panel and
   the web tasks list show what each node's branch did.
+
+- The image and video roles run on MiniMax. Settings > Model offers MiniMax's
+  two API-key providers (`minimax`, `minimax_cn_api`) for both roles, and a
+  section naming one takes that provider's address and key and calls
+  MiniMax's own APIs: `/v1/image_generation`, where an input image is the
+  character to keep, and the video APIs, text-to-video or from a
+  `first_frame_image`. The video section takes a `provider` as the image
+  section does; one written there by hand was ignored before and is honoured
+  now. Raven-PPT's pinned image settings keep the provider they run on, and
+  `PPT_IMAGE_PROVIDER` puts a deck's pictures on a provider of its own. See
+  `docs/minimax-media.md`.
 
 ### Changed
 
@@ -462,23 +358,16 @@ All notable changes to Raven are documented here.
 
 ### Fixed
 
-- **The pinchbench task ids agree with their filenames again.** Two task files
-  were renamed to make room for two insertions and their front-matter ids were
-  left behind, so `task_18_market_research.md` answered to
-  `task_16_market_research` and `task_19_spreadsheet_summary.md` answered to
-  `task_18_spreadsheet_summary`. The bench loads the **front-matter id** and
-  selects on it, so a runner asked for the id in the filename - which is what a
-  reader types - matched nothing and ran nothing: a silent no-op that looks
-  like a run that found nothing to do. The routing classifier named the tasks
-  by their filenames and so dispatched to ids no task file carried, and the
-  offline routing snapshot named the old ids and so pointed at tasks that did
-  not exist. The filenames are the current series and the ids are the stale
-  half, so the ids now follow the files, and the snapshot's ids were relabelled
-  to match (the score belongs to the same task under its current name; nothing
-  about the measurement changed). A new test pins the invariant from both
-  sides: every task file answers to its own filename, and every id the
-  classifier, the embeddings table and the routing snapshot name is a task
-  that exists.
+- A continued DAG node is judged against what it was told after an attempt
+  fell short, not only against its first prompt. The judge read the task as
+  first given and nothing else, so when the user answered a stuck node by
+  choosing another deliverable through `resolve_dag_node` -- a replacement
+  pull request instead of a push to the original, say -- every attempt that
+  delivered it was judged not accomplished until the node ran out of
+  continuations and failed. Each continue message is now recorded beside the
+  node's prompt, oldest first (`<node>.follow_ups.json`), and the judge reads
+  them as part of the task, the later one standing where two disagree. A node
+  that was never continued is judged exactly as before.
 
 - What an agent on a registered machine writes on stderr reaches Raven even
   when no link held the agent at the time. The node kept those lines but, when
@@ -1656,54 +1545,6 @@ All notable changes to Raven are documented here.
   first and fall back to `task`, so a transcript recorded before this rename keeps labeling
   its delegation rows correctly.
 
-### Fixed
-
-- **The market rung now fires on the research flow's own output, and its check
-  reaches the report file.** Two separate causes, both found by replaying a
-  measured run's own artefacts rather than by reading the code.
-
-  The first: the gate was **reached**, and it declined at the table. The flow's
-  report contract asks for the URL of a page in the **prose** and says a
-  candidate's provenance "belongs under it as prose or in a second table, because
-  a row nobody can read across is a list with extra punctuation" -- so the
-  comparison table the flow writes carries no citation in any cell, and the
-  table reader, which only accepted a table whose cells cite a page, refused it
-  by design. A table is now found **by its shape** as well: the name column's
-  header has to say what it holds, at the front of the cell, because "Typical
-  vendors" names a list of vendors inside a cell and not the company a row is
-  about. A table that names companies but whose facts cannot be traced to a
-  page is **asked about once**, for a `Read from` column, on the same one-turn
-  budget the report shape gate uses for a report in three sections; a turn that
-  was asked and did not answer keeps its own answer, and the record says it was
-  asked.
-
-  The second, and independent: the rung replaced the **whole answer** with the
-  scan's own rendering, so the reply lost the report's shape and its length,
-  and the flow's file sync left the report file -- the file the task is graded
-  on -- untouched. The rung now ships by **swapping the verified table into the
-  report**: the reader keeps the argument, the sections and the other tables,
-  and every fact in the comparison table carries the page it came from. A row
-  whose facts could not be traced is not in the table that ships.
-
-  Every outcome is recorded -- `no_table`, `no_ledger`, `no_sources`,
-  `refused`, `gated`, `bounced`, `shipped` -- because a gate that declines in
-  silence is indistinguishable from a gate that was never wired, and that
-  ambiguity is what made the rung look inert for two batches of measurement.
-
-### Fixed
-
-- **TinyFish is offered, selectable, and usable.** The source policy decides
-  whether a vendor's terms permit a use, and it decides by the registry - and
-  TinyFish had no registry row, so the guard refused every TinyFish request
-  while the provider tables offered it as a choice. Its terms are now a row in
-  the registry, cited to the terms that say so: the outputs are assigned to the
-  customer, and the terms forbid using the services or their outputs to build a
-  product that competes with TinyFish's. A search result is still never cached,
-  which is this repository's rule for search and enrichment services, and the
-  one the terms' ban on collecting site content into a database points at. Two
-  tests now hold the registry and the two provider tables together, so a vendor
-  cannot be offered without a row again.
-
 ## v0.1.0 - Public Preview - 2026-06-30
 
 Raven is now available as an Apache-2.0 open-source project.
@@ -1744,3 +1585,12 @@ curl -fsSL https://raven.evermind.ai/install.sh | bash
 - Future releases should use semantic versioning: patch releases for fixes,
   minor releases for new capabilities, and v1.0 once the public CLI and plugin
   contracts are stable.
+- **A draft `agent-decision` predicate for in-toto**, in
+- **The signed-records corpus**: real agent runs, attested, verifiable offline
+- **The evidence bundle spec** (`docs/specs/2026-10-20-evidence-bundle-design.md`): one
+- **The market rung now reads the pages the turn opened, not the ledger file.**
+- **The market-scan rung.** A research turn whose answer carries a market
+- TinyFish joins the `web_search` vendors: `tools.web.search.provider: tinyfish`
+- **The pinchbench task ids agree with their filenames again.** Two task files
+- **The market rung now fires on the research flow's own output, and its check
+- **TinyFish is offered, selectable, and usable.** The source policy decides
