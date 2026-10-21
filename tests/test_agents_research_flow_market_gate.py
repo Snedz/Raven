@@ -76,14 +76,29 @@ def _gate() -> MarketScanGate:
 
 @pytest.mark.asyncio
 async def test_the_gate_fires_on_the_turns_stashed_rows():
-    """The rows the turn stashed are the rows the gate needs."""
+    """The rows the turn stashed are the rows the gate needs.
+
+    The gate **checks the report's own table** and ships the report with
+    that table replaced by the verified one. It does not replace the report:
+    the reader keeps the argument, the sections and the other tables, and the
+    comparison table gains the page behind every fact in it.
+    """
     stash_turn_rows(ROWS)
     try:
         decision = await _gate().after_iteration(_ctx())
     finally:
         take_turn_rows()
-    assert decision.short_circuit_result is not None
-    assert "What is in the market" in decision.short_circuit_result
+    shipped = decision.short_circuit_result
+    assert shipped is not None
+    # The report's own shape survives - this is what lets the flow's file
+    # sync write the reply over the file the turn drafted.
+    assert shipped.startswith("# Competitive landscape")
+    assert "> The market is led by two vendors." in shipped
+    # And the table is the verified one: every fact carries its page.
+    assert "| Acme |" in shipped
+    assert f"[Observability sold per seat]({ACME})" in shipped
+    assert f"[$49 per seat per month]({ACME})" in shipped
+    assert f"[Contact Sales]({GLOBEX})" in shipped
 
 
 @pytest.mark.asyncio
@@ -95,7 +110,61 @@ async def test_without_the_stashed_rows_the_gate_refuses_rather_than_guessing():
     """
     decision = await _gate().after_iteration(_ctx())
     assert decision.short_circuit_result is None
-    assert "market_scan_no_ledger" in decision.notes
+    assert any("market_scan_no_ledger" in n for n in decision.notes)
+
+
+@pytest.mark.asyncio
+async def test_a_table_with_no_sources_is_asked_for_once_and_only_once():
+    """The report the flow's own contract produces, and what the gate does with it.
+
+    The contract tells the model to keep a candidate's provenance out of the
+    comparison table and under it as prose. So the table the flow produces
+    names companies and carries no citation, and the gate cannot trace a
+    single fact to a page. It asks for the sources - once - and says so in
+    the record.
+    """
+    answer = """# Competitive landscape
+
+> The market is led by two vendors.
+
+| Vendor | What it does | Price |
+|---|---|---|
+| Acme | Observability sold per seat | $49 per seat per month |
+| Globex | Observability sold on request | Contact Sales |
+"""
+    ctx = _ctx(answer)
+    decision = await _gate().after_iteration(ctx)
+    # Asked, not shipped, and not silently ignored.
+    assert decision.short_circuit_result is None
+    assert decision.rollback is True
+    assert decision.rollback_inject is not None
+    assert "Read from" in decision.rollback_inject[-1]["content"]
+    assert ctx.metadata["market_scan"]["last_event"] == "asked"
+
+    # Asked a second time, the gate stops asking and declines: a turn that
+    # was asked and did not answer keeps its own answer.
+    again = await _gate().after_iteration(ctx)
+    assert again.rollback is False
+    assert again.short_circuit_result is None
+    assert any("market_scan_no_traced_facts" in n for n in again.notes)
+    assert ctx.metadata["market_scan"]["last_event"] == "no_traced_facts"
+
+
+@pytest.mark.asyncio
+async def test_a_report_without_a_company_table_is_left_alone():
+    """A table that does not name companies is not a market table."""
+    answer = """# Pricing models
+
+| Model | How it charges | Typical vendors |
+|---|---|---|
+| Per host | Fixed monthly fee per monitored host | Datadog, New Relic |
+| Per GB | Per GB of telemetry | Grafana Cloud |
+"""
+    ctx = _ctx(answer)
+    decision = await _gate().after_iteration(ctx)
+    assert decision.short_circuit_result is None
+    assert decision.rollback is False
+    assert any("market_scan_no_table" in n for n in decision.notes)
 
 
 def test_appending_a_row_stashes_it_for_the_gate_that_runs_mid_turn():
@@ -131,3 +200,52 @@ def test_peeking_at_the_rows_leaves_them_for_the_appendix():
         assert turn_rows() == []
     finally:
         take_turn_rows()
+
+
+@pytest.mark.asyncio
+async def test_the_output_the_prompt_instructs_is_the_output_the_gate_accepts():
+    """The whole ask, end to end: the gate asks, the turn complies, the gate ships.
+
+    The prompt names two forms - a markdown link on the fact, and a bare URL
+    in a `Read from` column - and both have to be forms the reader can trace.
+    A prompt that asks for something the parser cannot read produces a turn
+    that was asked and still has no source, which is the state the ask
+    exists to end.
+    """
+    from research_flow.gates.market_scan import _SOURCE_COLUMN_PROMPT
+
+    for instructed in (
+        # The link on the fact, exactly as the prompt writes it.
+        f"""# Competitive landscape
+
+> The market is led by two vendors.
+
+| Vendor | Price |
+|---|---|
+| Acme | [$49 per seat per month]({ACME}) |
+| Globex | [Contact Sales]({GLOBEX}) |
+""",
+        # The bare URL in a `Read from` column, one per row.
+        f"""# Competitive landscape
+
+> The market is led by two vendors.
+
+| Vendor | Price | Read from |
+|---|---|---|
+| Acme | $49 per seat per month | {ACME} |
+| Globex | Contact Sales | {GLOBEX} |
+""",
+    ):
+        ctx = _ctx(instructed)
+        stash_turn_rows(ROWS)
+        try:
+            decision = await _gate().after_iteration(ctx)
+        finally:
+            take_turn_rows()
+        assert decision.rollback is False, "the instructed output must not be asked about again"
+        assert decision.short_circuit_result is not None, instructed
+        assert f"{ACME}" in decision.short_circuit_result
+
+    # And the prompt really does describe those two forms.
+    assert "[$15 per host per month](https://example.com/pricing)" in _SOURCE_COLUMN_PROMPT
+    assert "one URL per row" in _SOURCE_COLUMN_PROMPT
