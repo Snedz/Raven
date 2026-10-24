@@ -51,7 +51,7 @@ dependencies = [
     # directly: it used to arrive three hops away through the memory plugin's
     # own dependencies, and reading an image is not the memory plugin's to
     # keep working.
-    "pillow>=10.0.0",
+    "pillow>=13.0.0",
     # Rasterises a QR-login channel's scan URL server-side, so the page shows an
     # <img> instead of carrying a QR encoder. Not in the channel extras where it
     # started: signing in to WeChat happens in the UI, and an install that cannot
